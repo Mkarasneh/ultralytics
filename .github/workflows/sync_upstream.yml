@@ -15,7 +15,7 @@ jobs:
 
     - name: Sync the fork
       run: |
-        git remote add upstream https://github.com/ultralytics/ultralytics
+        git remote add upstream https://github.com/ultralytics/ultralytics.git
         git fetch upstream
         git checkout main # or whatever your default branch is
         git merge upstream/main # again, replace with the default branch name if it's different
