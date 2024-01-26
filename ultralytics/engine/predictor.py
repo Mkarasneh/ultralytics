@@ -132,7 +132,7 @@ class BasePredictor:
             self._last_reset_time = current_time
 
             self.last_mileMarker = None
-            print(f"MileMarker count is reset to {self.last_mileMarker}")
+            # print(f"MileMarker count is reset to {self.last_mileMarker}")
 
     def preprocess(self, im):
         """
@@ -296,6 +296,8 @@ class BasePredictor:
                 no_track_datas = []
                 no_track_masks = []
                 for result in self.results:
+                    if result.boxes is None:
+                        break
                     no_track_xyxys += [result.boxes.xyxy]
                     no_track_clss += [result.boxes.cls]
                     no_track_datas += [result.boxes.data]
@@ -314,6 +316,9 @@ class BasePredictor:
                 self.reset_last_mileMarker()            
                 for i in range(len(self.results)):
 
+                    if self.results[i].boxes is None:
+                        break
+                    
                     # get detector results
                     no_track_xyxy = no_track_xyxys[i].cpu() if i < len(no_track_xyxys) else None
                     no_track_cls = no_track_clss[i].cpu() if i < len(no_track_clss) else None
