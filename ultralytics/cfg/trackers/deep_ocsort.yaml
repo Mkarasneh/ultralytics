@@ -1,0 +1,25 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# Default YOLO tracker settings for DeeoOCSort tracker https://github.com/ifzhang/ByteTrack
+
+tracker_type: deep_ocsort  # tracker type, ['botsort', 'bytetrack', 'deep_ocsort']
+# Trial number:      0
+# HOTA, MOTA, IDF1:  [27.884, 11.425, 21.545]
+reid_weights: osnet_ain_x1_0_dukemtmcreid_256x128_amsgrad_ep90_lr0.0015_coslr_b64_fb10_softmax_labsmth_flip_jitter.pth
+device: cuda:0
+half: false
+per_class: false
+alpha_fixed_emb: 0.95
+asso_func: giou
+aw_off: false
+aw_param: 0.5
+cmc_off: false
+conf: 0.1
+delta_t: 3
+det_thresh: 0
+embedding_off: false
+inertia: 0.2
+iou_thresh: 0.05
+max_age: 30
+min_hits: 2
+new_kf_off: false
+w_association_emb: 0.75

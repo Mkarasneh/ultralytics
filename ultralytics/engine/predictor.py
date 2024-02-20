@@ -115,25 +115,6 @@ class BasePredictor:
         self._lock = threading.Lock()  # for automatic thread-safe inference
         callbacks.add_integration_callbacks(self)
 
-        # mile marker tracker
-        self.last_mileMarker = None
-        self.unused_tracker_ids = None
-        self._reset_threshold = 2 #seconds to reset the mileMarker tracker
-        self._last_reset_time = time.time()
-
-    def set_last_mileMarker(self, value):
-        current_time = time.time()
-        self._last_reset_time = current_time
-        self.last_mileMarker = value
-
-    def reset_last_mileMarker(self):
-        current_time = time.time()
-        if current_time - self._last_reset_time > self._reset_threshold:
-            self._last_reset_time = current_time
-
-            self.last_mileMarker = None
-            # print(f"MileMarker count is reset to {self.last_mileMarker}")
-
     def preprocess(self, im):
         """
         Prepares input image before inference.
@@ -334,7 +315,6 @@ class BasePredictor:
                 This method replaces tracker bounding boxes with detector bounding boxes.
                 It uses the Hungarian algorithm for optimal assignment and handles special cases for mile markers.
                 """
-                self.reset_last_mileMarker()            
                 for i in range(len(self.results)):
 
                     if self.results[i].boxes is None:
@@ -351,9 +331,6 @@ class BasePredictor:
 
                     # Assign results_masks to CPU data of masks if they exist for the ith result, else None
                     results_masks = self.results[i].masks.data.cpu() if self.results[i].masks is not None else None
-
-                    # Initialize data for mile markers
-                    mile_marker_data, tracked_mile_marker_set = None, set()
 
                     # check if there are tracker results, and then run the replacement code
                     if (self.results[i].boxes.id is not None):
@@ -372,7 +349,6 @@ class BasePredictor:
                         # Initialize parameters for dynamic threshold adjustment
                         multiplier = 2  # Starting multiplier
                         max_multiplier = 5.0  # Maximum allowed multiplier
-                        mile_marker_found = False
 
                         while multiplier <= max_multiplier:
                             # Matrix to hold distances, initialized with 'inf'
@@ -393,12 +369,6 @@ class BasePredictor:
                                     if track_cls[j] == no_track_cls[index]:
                                         dist = torch.norm(track_center - center_no_track[index])
                                         dist_matrix[j, index] = dist
-
-                                # get the location of the milemarkers (#7)
-                                if track_cls[j] == 7:
-                                    track_x_location = track_xyxy[j, 0] + track_size_x/2
-                                    track_y_location = track_xyxy[j, 1] + track_size_y/2
-                                    mile_marker_found = True
                             
                             # Check for feasibility before calling the Hungarian algorithm
                             is_matrix_feasible = not torch.isinf(dist_matrix).all(dim=1).any()
@@ -407,15 +377,6 @@ class BasePredictor:
                             else:
                                 multiplier += 0.5  # Increment the multiplier
                                 print(f"Updating multiplier = {multiplier}")
-
-                        # update the data for location of the milemarkers if it exists
-                        if mile_marker_found:
-                            if mile_marker_data is None:
-                                mile_marker_data = torch.tensor([track_x_location, track_y_location, track_size_x, track_size_y, track_id[j]])
-                            else:
-                                append_mile_marker = torch.tensor([track_x_location, track_y_location, track_size_x, track_size_y, track_id[j]])
-                                mile_marker_data = torch.cat((mile_marker_data, append_mile_marker), dim=0)
-                            tracked_mile_marker_set.add(int(index))
 
                         # Hungarian algorithm for optimal assignment
                         row_ind, col_ind = linear_sum_assignment(dist_matrix.numpy())
@@ -428,98 +389,10 @@ class BasePredictor:
                             else:
                                 # Fallback: retain the original non-tracked box
                                 new_xyxy[row] = no_track_xyxy[row]
-                                print("ERORR!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                                print(f"Using fallback for {row}th box")
 
                         # update results with new bounding boxes
                         results_boxes[:, :4] = new_xyxy
-                    else:
-                        # initialize a new results variable because the image is not tracked
-                        results_boxes = None
-                        results_masks = None
-
-                    # add tracker id to the mile marker class
-                    if self.last_mileMarker is not None and no_track_mask is not None:
-
-                        # check for mile marker detected instances that do not have tracker id
-                        noTrack_mileMarker_filtered, mask_mileMarker_filtered = [], []
-                        for index in np.arange(no_track_cls.shape[0]):
-                            if index not in tracked_mile_marker_set and no_track_cls[index] == 7:
-                                noTrack_mileMarker_filtered += [no_track_data[index]]
-                                mask_mileMarker_filtered += [no_track_mask[index]]
-
-                        if (len(noTrack_mileMarker_filtered) == 0):
-                            break
-
-                        noTrack_mileMarker_filtered = torch.concatenate(noTrack_mileMarker_filtered)
-                        mask_mileMarker_filtered = torch.concatenate(mask_mileMarker_filtered)
-
-                        # make sure the tensors are two dimensional
-                        noTrack_mileMarker_filtered = noTrack_mileMarker_filtered.unsqueeze(0) if noTrack_mileMarker_filtered.dim() == 1 else noTrack_mileMarker_filtered
-                        mask_mileMarker_filtered = mask_mileMarker_filtered.unsqueeze(0) if mask_mileMarker_filtered.dim() <= 2 else mask_mileMarker_filtered
-                        self.last_mileMarker = self.last_mileMarker.unsqueeze(0) if self.last_mileMarker.dim() == 1 else self.last_mileMarker
-
-                        untracked_mileMarker_centers = torch.vstack((((noTrack_mileMarker_filtered[:, 0] + noTrack_mileMarker_filtered[:, 2])/2), ((noTrack_mileMarker_filtered[:, 1] + noTrack_mileMarker_filtered[:, 3]) /2))).T
-                        tracked_mileMarker_centers = self.last_mileMarker[:,:2]
-                        
-                        mileMarker_dist = pairwise_euclidean_distance(tracked_mileMarker_centers, untracked_mileMarker_centers)
-                        mileMarker_min_dist = torch.sort(mileMarker_dist, dim=1)
-                        # print(self.last_mileMarker)
-                        # print(mileMarker_min_dist)
-
-                        for j in range(self.last_mileMarker.shape[0]):
-                            last_mileMarker = self.last_mileMarker[j]
-                            #diagonal = torch.sqrt(last_mileMarker[2]**2 + last_mileMarker[3]**2)
-                            dist_threshold = 1000
-                            # print(dist_threshold, mileMarker_min_dist.values[j, 0])
-                            last_area = last_mileMarker[2]*last_mileMarker[3]
-
-                            if mileMarker_min_dist.values[j, 0] < dist_threshold:
-                                # get the index of the min distance element
-                                index = mileMarker_min_dist.indices[j, 0]
-
-                                # get the original data of the matching element
-                                matching_mileMarker = noTrack_mileMarker_filtered[index]
-                                matching_size_x = matching_mileMarker[2] - matching_mileMarker[0]
-                                matching_size_y = matching_mileMarker[3] - matching_mileMarker[1]
-                                matching_id = last_mileMarker[4].unsqueeze(0)
-                                matching_centers = untracked_mileMarker_centers[index]
-                                matching_area = matching_size_x * matching_size_y
-
-                                # print(last_area, matching_area, last_area<matching_area, matching_id)
-                                # TODO check if the matching_area is a lot smaller than the last area
-
-                                result_mileMarker = torch.cat((matching_mileMarker[:4],matching_id,matching_mileMarker[-2:]), dim=0)
-
-                                # add the new details to the mile_marker_data list
-                                if mile_marker_data is None:
-                                    mile_marker_data = torch.tensor([matching_centers[0].item(), matching_centers[1].item(), matching_size_x.item(), matching_size_y.item(), matching_id.item()])
-                                else:
-                                    append_mile_marker = torch.tensor([matching_centers[0].item(), matching_centers[1].item(), matching_size_x.item(), matching_size_y.item(), matching_id.item()])
-                                    mile_marker_data = torch.cat((mile_marker_data, append_mile_marker), dim=0)
-
-                                # update results with new mile marker data
-                                if results_boxes is None:
-                                    results_boxes = result_mileMarker.unsqueeze(0)
-                                else:    
-                                    results_boxes = torch.cat((results_boxes, result_mileMarker.unsqueeze(0)), dim=0) # append to this array the new lines
-
-                                if results_masks is None:
-                                    results_masks = mask_mileMarker_filtered[index].unsqueeze(0)
-                                else:
-                                    results_masks = torch.cat((results_masks, mask_mileMarker_filtered[index].unsqueeze(0)), dim=0)
-
-                    else:
-                        # TODO: add implementation if this is the first object with no tracker id
-                        #self.unused_tracker_ids
-                        pass
-
-                    # update last mile marker object details
-                    if mile_marker_data is None:
-                        pass
-                    elif mile_marker_data.shape[0]:
-                        self.set_last_mileMarker(mile_marker_data)
-                    else:
-                        self.set_last_mileMarker(None)
                                 
                     self.results[i].update(boxes=results_boxes, masks=results_masks)
                 ##################################################
