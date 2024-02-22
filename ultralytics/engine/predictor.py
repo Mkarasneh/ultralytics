@@ -272,6 +272,7 @@ class BasePredictor:
                 ops.Profile(device=self.device),
                 ops.Profile(device=self.device),
                 ops.Profile(device=self.device),
+                ops.Profile(device=self.device)
             )
             self.run_callbacks("on_predict_start")
             for batch in self.dataset:
@@ -293,109 +294,108 @@ class BasePredictor:
                 # Postprocess
                 with profilers[2]:
                     self.results = self.postprocess(preds, im, im0s)
-                no_track_xyxys = []
-                no_track_clss = []
-                no_track_datas = []
-                no_track_masks = []
-                for result in self.results:
-                    if result.boxes is None:
-                        break
-                    no_track_xyxys += [result.boxes.xyxy]
-                    no_track_clss += [result.boxes.cls]
-                    no_track_datas += [result.boxes.data]
 
-                    if result.masks is not None:
-                        no_track_masks += [result.masks.data]
+                # Tracker
+                with profilers[3]:
+                    no_track_xyxys = []
+                    no_track_clss = []
+                    no_track_datas = []
+                    no_track_masks = []
+                    for result in self.results:
+                        if result.boxes is None:
+                            break
+                        no_track_xyxys += [result.boxes.xyxy]
+                        no_track_clss += [result.boxes.cls]
+                        no_track_datas += [result.boxes.data]
 
-                self.run_callbacks("on_predict_postprocess_end")
-            
-                ##################################################
-                # Replace tracker bounding box with detector bounding box
-                """
-                This method replaces tracker bounding boxes with detector bounding boxes.
-                It uses the Hungarian algorithm for optimal assignment and handles special cases for mile markers.
-                """
-                for i in range(len(self.results)):
+                        if result.masks is not None:
+                            no_track_masks += [result.masks.data]
 
-                    if self.results[i].boxes is None:
-                        break
-                    
-                    # get detector results
-                    no_track_xyxy = no_track_xyxys[i].cpu() if i < len(no_track_xyxys) else None
-                    no_track_cls = no_track_clss[i].cpu() if i < len(no_track_clss) else None
-                    no_track_data = no_track_datas[i].cpu() if i < len(no_track_datas) else None
-                    no_track_mask = no_track_masks[i].cpu() if i < len(no_track_masks) else None
 
-                    # get the result's bounding boxes & masks data to update them
-                    results_boxes = self.results[i].boxes.data.cpu()
+                    self.run_callbacks("on_predict_postprocess_end")
+                
+                    ##################################################
+                    # Replace tracker bounding box with detector bounding box
+                    """
+                    This method replaces tracker bounding boxes with detector bounding boxes.
+                    It uses the Hungarian algorithm for optimal assignment and handles special cases for mile markers.
+                    """
+                    for i in range(len(self.results)):
 
-                    # Assign results_masks to CPU data of masks if they exist for the ith result, else None
-                    results_masks = self.results[i].masks.data.cpu() if self.results[i].masks is not None else None
+                        if self.results[i].boxes is None:
+                            break
 
-                    # check if there are tracker results, and then run the replacement code
-                    if (self.results[i].boxes.id is not None):
+                        # get detector results
+                        no_track_xyxy = no_track_xyxys[i].cpu() if i < len(no_track_xyxys) else None
+                        no_track_cls = no_track_clss[i].cpu() if i < len(no_track_clss) else None
 
-                        # get tracker results
-                        track_xyxy = self.results[i].boxes.xyxy
-                        track_cls = self.results[i].boxes.cls
-                        track_id = self.results[i].boxes.id
+                        # get the result's bounding boxes & masks data to update them
+                        results_boxes = self.results[i].boxes.data.cpu()
 
-                        center_no_track = torch.vstack((((no_track_xyxy[:, 0] + no_track_xyxy[:, 2])/2), ((no_track_xyxy[:, 1] + no_track_xyxy[:, 3]) /2))).T
-                        center_tracked = torch.vstack((((track_xyxy[:, 0] + track_xyxy[:, 2]) /2), ((track_xyxy[:, 1] + track_xyxy[:, 3]) /2))).T
-                        
-                        # KDTree for efficient nearest neighbor search
-                        tree = KDTree(center_no_track)
+                        # check if there are tracker results, and then run the replacement code
+                        if (self.results[i].boxes.id is not None):
 
-                        # Initialize parameters for dynamic threshold adjustment
-                        multiplier = 2  # Starting multiplier
-                        max_multiplier = 5.0  # Maximum allowed multiplier
+                            # get tracker results
+                            track_xyxy = self.results[i].boxes.xyxy
+                            track_cls = self.results[i].boxes.cls
+                            track_id = self.results[i].boxes.id
 
-                        while multiplier <= max_multiplier:
-                            # Matrix to hold distances, initialized with 'inf'
-                            dist_matrix = torch.full((len(track_xyxy), len(no_track_xyxy)), float('inf'))
-
-                            for j, track_center in enumerate(center_tracked):
-                                # Determine dynamic distance threshold
-                                track_size_x = track_xyxy[j, 2] - track_xyxy[j, 0]
-                                track_size_y = track_xyxy[j, 3] - track_xyxy[j, 1]
-                                diagonal = torch.sqrt(track_size_x**2 + track_size_y**2)
-                                dist_threshold = multiplier * diagonal
-                                                            
-                                # Query within threshold
-                                indices = tree.query_ball_point(track_center, r=dist_threshold)
-
-                                # Update distance matrix
-                                for index in indices:
-                                    if track_cls[j] == no_track_cls[index]:
-                                        dist = torch.norm(track_center - center_no_track[index])
-                                        dist_matrix[j, index] = dist
+                            center_no_track = torch.vstack((((no_track_xyxy[:, 0] + no_track_xyxy[:, 2])/2), ((no_track_xyxy[:, 1] + no_track_xyxy[:, 3]) /2))).T
+                            center_tracked = torch.vstack((((track_xyxy[:, 0] + track_xyxy[:, 2]) /2), ((track_xyxy[:, 1] + track_xyxy[:, 3]) /2))).T
                             
-                            # Check for feasibility before calling the Hungarian algorithm
-                            is_matrix_feasible = not torch.isinf(dist_matrix).all(dim=1).any()
-                            if is_matrix_feasible:
-                                break
-                            else:
-                                multiplier += 0.5  # Increment the multiplier
-                                print(f"Updating multiplier = {multiplier}")
+                            # KDTree for efficient nearest neighbor search
+                            tree = KDTree(center_no_track)
 
-                        # Hungarian algorithm for optimal assignment
-                        row_ind, col_ind = linear_sum_assignment(dist_matrix.numpy())
+                            # Initialize parameters for dynamic threshold adjustment
+                            multiplier = 2  # Starting multiplier
+                            max_multiplier = 5.0  # Maximum allowed multiplier
 
-                        # Assign boxes based on Hungarian algorithm results
-                        new_xyxy = torch.clone(track_xyxy)
-                        for row, col in zip(row_ind, col_ind):
-                            if dist_matrix[row, col] != float('inf'):
-                                new_xyxy[row] = no_track_xyxy[col]
-                            else:
-                                # Fallback: retain the original non-tracked box
-                                new_xyxy[row] = no_track_xyxy[row]
-                                print(f"Using fallback for {row}th box")
+                            while multiplier <= max_multiplier:
+                                # Matrix to hold distances, initialized with 'inf'
+                                dist_matrix = torch.full((len(track_xyxy), len(no_track_xyxy)), float('inf'))
 
-                        # update results with new bounding boxes
-                        results_boxes[:, :4] = new_xyxy
+                                for j, track_center in enumerate(center_tracked):
+                                    # Determine dynamic distance threshold
+                                    track_size_x = track_xyxy[j, 2] - track_xyxy[j, 0]
+                                    track_size_y = track_xyxy[j, 3] - track_xyxy[j, 1]
+                                    diagonal = torch.sqrt(track_size_x**2 + track_size_y**2)
+                                    dist_threshold = multiplier * diagonal
+                                                                
+                                    # Query within threshold
+                                    indices = tree.query_ball_point(track_center, r=dist_threshold)
+
+                                    # Update distance matrix
+                                    for index in indices:
+                                        if track_cls[j] == no_track_cls[index]:
+                                            dist = torch.norm(track_center - center_no_track[index])
+                                            dist_matrix[j, index] = dist
                                 
-                    self.results[i].update(boxes=results_boxes, masks=results_masks)
-                ##################################################
+                                # Check for feasibility before calling the Hungarian algorithm
+                                is_matrix_feasible = not torch.isinf(dist_matrix).all(dim=1).any()
+                                if is_matrix_feasible:
+                                    break
+                                else:
+                                    multiplier += 0.5  # Increment the multiplier
+                                    print(f"Updating multiplier = {multiplier}")
+
+                            # Hungarian algorithm for optimal assignment
+                            row_ind, col_ind = linear_sum_assignment(dist_matrix.numpy())
+
+                            # Assign boxes based on Hungarian algorithm results
+                            new_xyxy = torch.clone(track_xyxy)
+                            for row, col in zip(row_ind, col_ind):
+                                if dist_matrix[row, col] != float('inf'):
+                                    new_xyxy[row] = no_track_xyxy[col]
+                                else:
+                                    # Fallback: retain the original non-tracked box
+                                    new_xyxy[row] = track_xyxy[row]
+                                    print(f"Using fallback for {row}th box")
+
+                            # update results with new bounding boxes
+                            results_boxes[:, :4] = new_xyxy
+
+                        self.results[i].update(boxes=results_boxes)
+                    ##################################################
 
                 # Visualize, save, write results
                 n = len(im0s)
@@ -433,8 +433,8 @@ class BasePredictor:
         if self.args.verbose and self.seen:
             t = tuple(x.t / self.seen * 1e3 for x in profilers)  # speeds per image
             LOGGER.info(
-                f"Speed: %.1fms preprocess, %.1fms inference, %.1fms postprocess per image at shape "
-                f"{(1, 3, *im.shape[2:])}" % t
+                f"Speed: %.1fms preprocess, %.1fms inference, %.1fms postprocess, %.1fms tracker per image at shape "
+                f"{(1, 4, *im.shape[2:])}, total: {sum(t):.1f}ms" % t
             )
         if self.args.save or self.args.save_txt or self.args.save_crop:
             nl = len(list(self.save_dir.glob("labels/*.txt")))  # number of labels
