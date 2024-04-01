@@ -8,18 +8,18 @@ reid_weights: osnet_ain_x1_0_dukemtmcreid_256x128_amsgrad_ep90_lr0.0015_coslr_b6
 device: cuda:0
 half: false
 per_class: false
-alpha_fixed_emb: 0.95
-asso_func: giou
+alpha_fixed_emb: 0.95         # af
+asso_func: diou               # association function: ['iou', 'giou', 'ciou', 'diou', 'centroid']
 aw_off: false
 aw_param: 0.5
 cmc_off: false
 conf: 0.1
-delta_t: 3
-det_thresh: 0
+delta_t: 1                    # affects how much the tracker predicts the object to have moved between observations
+det_thresh: 0.3               # detection threshold confidence
 embedding_off: false
-inertia: 0.2
-iou_thresh: 0.05
-max_age: 30
+inertia: 0.2                 # affects how much the tracker predicts the object to have moved between observations
+iou_thresh: 0.30               # iou threshold for matching
+max_age: 5
 min_hits: 2
 new_kf_off: false
 w_association_emb: 0.75
