@@ -24,7 +24,9 @@ try:
 except ImportError:
     thop = None
 
+# Version checks (all default to version>=min_version)
 TORCH_1_9 = check_version(torch.__version__, "1.9.0")
+TORCH_1_13 = check_version(torch.__version__, "1.13.0")
 TORCH_2_0 = check_version(torch.__version__, "2.0.0")
 TORCHVISION_0_10 = check_version(torchvision.__version__, "0.10.0")
 TORCHVISION_0_11 = check_version(torchvision.__version__, "0.11.0")
@@ -35,7 +37,7 @@ TORCHVISION_0_13 = check_version(torchvision.__version__, "0.13.0")
 def torch_distributed_zero_first(local_rank: int):
     """Decorator to make all processes in distributed training wait for each local_master to do something."""
     initialized = torch.distributed.is_available() and torch.distributed.is_initialized()
-    if initialized and local_rank not in (-1, 0):
+    if initialized and local_rank not in {-1, 0}:
         dist.barrier(device_ids=[local_rank])
     yield
     if initialized and local_rank == 0:
@@ -107,7 +109,7 @@ def select_device(device="", batch=0, newline=False, verbose=True):
     for remove in "cuda:", "none", "(", ")", "[", "]", "'", " ":
         device = device.replace(remove, "")  # to string, 'cuda:0' -> '0' and '(0, 1)' -> '0,1'
     cpu = device == "cpu"
-    mps = device in ("mps", "mps:0")  # Apple Metal Performance Shaders (MPS)
+    mps = device in {"mps", "mps:0"}  # Apple Metal Performance Shaders (MPS)
     if cpu or mps:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # force torch.cuda.is_available() = False
     elif device:  # non-cpu device requested
@@ -115,7 +117,7 @@ def select_device(device="", batch=0, newline=False, verbose=True):
             device = "0"
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
         os.environ["CUDA_VISIBLE_DEVICES"] = device  # set environment variable - must be before assert is_available()
-        if not (torch.cuda.is_available() and torch.cuda.device_count() >= len(device.replace(",", ""))):
+        if not (torch.cuda.is_available() and torch.cuda.device_count() >= len(device.split(","))):
             LOGGER.info(s)
             install = (
                 "See https://pytorch.org/get-started/locally/ for up-to-date torch install instructions if no "
@@ -345,7 +347,7 @@ def initialize_weights(model):
         elif t is nn.BatchNorm2d:
             m.eps = 1e-3
             m.momentum = 0.03
-        elif t in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU]:
+        elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
             m.inplace = True
 
 
@@ -501,6 +503,20 @@ def strip_optimizer(f: Union[str, Path] = "best.pt", s: str = "") -> None:
     torch.save(x, s or f)
     mb = os.path.getsize(s or f) / 1e6  # file size
     LOGGER.info(f"Optimizer stripped from {f},{f' saved as {s},' if s else ''} {mb:.1f}MB")
+
+
+def convert_optimizer_state_dict_to_fp16(state_dict):
+    """
+    Converts the state_dict of a given optimizer to FP16, focusing on the 'state' key for tensor conversions.
+
+    This method aims to reduce storage size without altering 'param_groups' as they contain non-tensor data.
+    """
+    for state in state_dict["state"].values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor) and v.dtype is torch.float32:
+                state[k] = v.half()
+
+    return state_dict
 
 
 def profile(input, ops, n=10, device=None):

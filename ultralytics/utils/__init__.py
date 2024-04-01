@@ -30,6 +30,7 @@ RANK = int(os.getenv("RANK", -1))
 LOCAL_RANK = int(os.getenv("LOCAL_RANK", -1))  # https://pytorch.org/docs/stable/elastic/run.html
 
 # Other Constants
+ARGV = sys.argv or ["", ""]  # sometimes sys.argv = []
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLO
 ASSETS = ROOT / "assets"  # default images
@@ -40,7 +41,7 @@ VERBOSE = str(os.getenv("YOLO_VERBOSE", True)).lower() == "true"  # global verbo
 TQDM_BAR_FORMAT = "{l_bar}{bar:10}{r_bar}" if VERBOSE else None  # tqdm bar format
 LOGGING_NAME = "ultralytics"
 MACOS, LINUX, WINDOWS = (platform.system() == x for x in ["Darwin", "Linux", "Windows"])  # environment booleans
-ARM64 = platform.machine() in ("arm64", "aarch64")  # ARM64 booleans
+ARM64 = platform.machine() in {"arm64", "aarch64"}  # ARM64 booleans
 HELP_MSG = """
     Usage examples for running YOLOv8:
 
@@ -113,7 +114,7 @@ class TQDM(tqdm_original):
 
     Args:
         *args (list): Positional arguments passed to original tqdm.
-        **kwargs (dict): Keyword arguments, with custom defaults applied.
+        **kwargs (any): Keyword arguments, with custom defaults applied.
     """
 
     def __init__(self, *args, **kwargs):
@@ -358,7 +359,7 @@ def yaml_load(file="data.yaml", append_filename=False):
     Returns:
         (dict): YAML data and file name.
     """
-    assert Path(file).suffix in (".yaml", ".yml"), f"Attempting to load non-YAML file {file} with yaml_load()"
+    assert Path(file).suffix in {".yaml", ".yml"}, f"Attempting to load non-YAML file {file} with yaml_load()"
     with open(file, errors="ignore", encoding="utf-8") as f:
         s = f.read()  # string
 
@@ -522,7 +523,7 @@ def is_pytest_running():
     Returns:
         (bool): True if pytest is running, False otherwise.
     """
-    return ("PYTEST_CURRENT_TEST" in os.environ) or ("pytest" in sys.modules) or ("pytest" in Path(sys.argv[0]).stem)
+    return ("PYTEST_CURRENT_TEST" in os.environ) or ("pytest" in sys.modules) or ("pytest" in Path(ARGV[0]).stem)
 
 
 def is_github_action_running() -> bool:
@@ -865,12 +866,12 @@ def set_sentry():
         """
         if "exc_info" in hint:
             exc_type, exc_value, tb = hint["exc_info"]
-            if exc_type in (KeyboardInterrupt, FileNotFoundError) or "out of memory" in str(exc_value):
+            if exc_type in {KeyboardInterrupt, FileNotFoundError} or "out of memory" in str(exc_value):
                 return None  # do not send event
 
         event["tags"] = {
-            "sys_argv": sys.argv[0],
-            "sys_argv_name": Path(sys.argv[0]).name,
+            "sys_argv": ARGV[0],
+            "sys_argv_name": Path(ARGV[0]).name,
             "install": "git" if is_git_dir() else "pip" if is_pip_package() else "other",
             "os": ENVIRONMENT,
         }
@@ -878,8 +879,8 @@ def set_sentry():
 
     if (
         SETTINGS["sync"]
-        and RANK in (-1, 0)
-        and Path(sys.argv[0]).name == "yolo"
+        and RANK in {-1, 0}
+        and Path(ARGV[0]).name == "yolo"
         and not TESTS_RUNNING
         and ONLINE
         and is_pip_package()
@@ -958,14 +959,24 @@ class SettingsManager(dict):
             correct_keys = self.keys() == self.defaults.keys()
             correct_types = all(type(a) is type(b) for a, b in zip(self.values(), self.defaults.values()))
             correct_version = check_version(self["settings_version"], self.version)
+            help_msg = (
+                f"\nView settings with 'yolo settings' or at '{self.file}'"
+                "\nUpdate settings with 'yolo settings key=value', i.e. 'yolo settings runs_dir=path/to/dir'. "
+                "For help see https://docs.ultralytics.com/quickstart/#ultralytics-settings."
+            )
             if not (correct_keys and correct_types and correct_version):
                 LOGGER.warning(
                     "WARNING ⚠️ Ultralytics settings reset to default values. This may be due to a possible problem "
-                    "with your settings or a recent ultralytics package update. "
-                    f"\nView settings with 'yolo settings' or at '{self.file}'"
-                    "\nUpdate settings with 'yolo settings key=value', i.e. 'yolo settings runs_dir=path/to/dir'."
+                    f"with your settings or a recent ultralytics package update. {help_msg}"
                 )
                 self.reset()
+
+            if self.get("datasets_dir") == self.get("runs_dir"):
+                LOGGER.warning(
+                    f"WARNING ⚠️ Ultralytics setting 'datasets_dir: {self.get('datasets_dir')}' "
+                    f"must be different than 'runs_dir: {self.get('runs_dir')}'. "
+                    f"Please change one to avoid possible issues during training. {help_msg}"
+                )
 
     def load(self):
         """Loads settings from the YAML file."""
