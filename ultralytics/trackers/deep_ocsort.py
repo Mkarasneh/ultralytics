@@ -10,6 +10,8 @@
 
 import numpy as np
 from collections import deque
+from pathlib import Path
+import os
 
 from boxmot.appearance.reid_auto_backend import ReidAutoBackend
 from boxmot.motion.cmc import get_cmc_method
@@ -19,6 +21,31 @@ from boxmot.utils.iou import get_asso_func
 from boxmot.trackers.basetracker import BaseTracker
 from boxmot.utils import PerClassDecorator
 
+def DeepOCSortTracker(args, frame_rate=30):
+
+    PATH = Path(__file__).resolve()
+    ROOT = PATH.parents[1] 
+    reid_weights = Path(os.path.join(ROOT, f'reid/{args.reid_weights}'))
+
+    if args.tracker_type == 'deep_ocsort':
+
+        deepocsort = DeepOCSort(
+            model_weights= reid_weights,
+            device=args.device,
+            fp16=args.half,
+            per_class=args.per_class,
+            det_thresh=args.det_thresh,
+            max_age=args.max_age,
+            min_hits=args.min_hits,
+            iou_threshold=args.iou_thresh,
+            delta_t=args.delta_t,
+            asso_func=args.asso_func,
+            inertia=args.inertia,
+        )
+        return deepocsort
+    else:
+        print('No such tracker')
+        exit()
 
 def k_previous_obs(observations, cur_age, k):
     if len(observations) == 0:
