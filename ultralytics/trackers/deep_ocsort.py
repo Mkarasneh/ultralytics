@@ -8,6 +8,7 @@
     This script is adopted from the SORT script by Alex Bewley alex@bewley.ai
 """
 
+import torch
 import numpy as np
 from collections import deque
 from pathlib import Path
@@ -31,7 +32,7 @@ def DeepOCSortTracker(args, frame_rate=30):
 
         deepocsort = DeepOCSort(
             model_weights= reid_weights,
-            device=args.device,
+            device=torch.device(args.device),
             fp16=args.half,
             per_class=args.per_class,
             det_thresh=args.det_thresh,
@@ -402,6 +403,8 @@ class DeepOCSort(BaseTracker):
         """
         #dets, s, c = dets.data
         #print(dets, s, c)
+        if type(dets) != np.ndarray:
+            dets = dets.data
         assert isinstance(dets, np.ndarray), f"Unsupported 'dets' input type '{type(dets)}', valid format is np.ndarray"
         assert isinstance(img, np.ndarray), f"Unsupported 'img' input type '{type(img)}', valid format is np.ndarray"
         assert len(dets.shape) == 2, "Unsupported 'dets' dimensions, valid number of dimensions is two"
